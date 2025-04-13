@@ -30,9 +30,12 @@ class MulticastListener {
   }
 
   stopListening() {
-    this.server.close(() => {
-      console.log("Stopped listening for multicast messages.");
-    });
+    if (this.server) {
+      this.server.close(() => {
+        console.log("Stopped listening for multicast messages.");
+      });
+      this.server = null;
+    }
   }
 }
 
