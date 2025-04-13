@@ -4,10 +4,10 @@ class MulticastListener {
   constructor(multicastAddress, multicastPort) {
     this.multicastAddress = multicastAddress;
     this.multicastPort = multicastPort;
-    this.server = dgram.createSocket("udp4");
   }
 
   startListening(callback) {
+    this.server = dgram.createSocket("udp4");
     this.server.on("listening", () => {
       const address = this.server.address();
       console.log(`Listening for multicast messages on ${address.address}:${address.port}`);

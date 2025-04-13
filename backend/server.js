@@ -61,7 +61,7 @@ io.on("connection", (socket) => {
   socket.on("paramChange", ({ key, value }) => {
     if (params[key] !== undefined) {
       bbb_params.set_from_percent(key, value); // Update the parameter in the bbb_params object
-      socket.broadcast.emit("paramUpdate", { key, value });
+      socket.broadcast.emit("paramChange", { key, value });
     //   console.log({ success: true });
     //   console.debug(`Parameter ${key} updated to ${bbb_params.get(key).value}`);
     } else {
