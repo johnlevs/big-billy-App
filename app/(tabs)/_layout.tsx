@@ -1,7 +1,7 @@
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Tabs } from "expo-router";
 import React from "react";
-import { AppStateProvider } from "../../context/state";
+import { AppStateProvider } from "@/context/state";
 
 export default function TabLayout() {
   return (

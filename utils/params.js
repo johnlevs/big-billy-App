@@ -45,23 +45,24 @@ class ParamController {
 
   // Get a parameter by key
   get(key) {
-    const param = this._params[key];
-    if (!param) {
-      throw new Error(`Parameter with key "${key}" does not exist.`);
-    }
-    return param;
+    return this._params[key];
   }
 
   // Update the current value of a parameter
   set(key, value) {
-    const param = this.get(key);
-    param.value = value;
+    let param = this.get(key);
+    if (param) param.value = value;
+    else console.warn(`Parameter with key "${key}" does not exist.`);
   }
 
   set_from_percent(key, percent) {
     if (percent < 0 || percent > 1) throw new Error(`Percent value must be between 0 and 1.`);
 
     const param = this.get(key);
+    if (!param) {
+      console.warn(`Parameter with key "${key}" does not exist.`);
+      return;
+    }
     switch (param.p_type) {
       case Linear:
         param.value = lin_p2v(percent, param.min, param.max);

@@ -7,6 +7,7 @@ import { MulticastServer } from "./multicast.js";
 import { bbb_params } from "../utils/params.js";
 
 import { networkInterfaces } from "os";
+import { REST_PARAMS, WEBSOCK_PARAM_UPDATE, WEBSOCK_FFT_DATA } from "../utils/constants.js";
 
 const IPV4 = () => {
   const nets = networkInterfaces();
@@ -38,38 +39,46 @@ app.use(json());
 let params = bbb_params.params();
 
 // API endpoint to get parameters
-app.get("/params", (req, res) => {
+app.get(REST_PARAMS, (req, res) => {
   res.json(params);
 });
 
 // API endpoint to update parameters
-app.post("/params", (req, res) => {
+app.post(REST_PARAMS, (req, res) => {
   const { key, value } = req.body;
   if (params[key] !== undefined) {
     params[key] = value;
-    io.emit("paramUpdate", { key, value }); // Notify clients of the update
+    io.emit(WEBSOCK_PARAM_UPDATE, { key, value }); // Notify clients of the update
     res.json({ success: true });
   } else {
     res.status(400).json({ error: "Invalid parameter key" });
   }
 });
 
+let playbackInterval = null;
+
 io.on("connection", (socket) => {
   console.log("A client connected");
 
   // Listen for parameter changes from the client
-  socket.on("paramChange", ({ key, value }) => {
+  socket.on(WEBSOCK_PARAM_UPDATE, ({ key, value }) => {
     if (params[key] !== undefined) {
       bbb_params.set_from_percent(key, value); // Update the parameter in the bbb_params object
-      socket.broadcast.emit("paramChange", { key, value });
-    //   console.log({ success: true });
-    //   console.debug(`Parameter ${key} updated to ${bbb_params.get(key).value}`);
+      socket.broadcast.emit(WEBSOCK_PARAM_UPDATE, { key, value });
     } else {
       console.error({ success: false, error: "Invalid parameter key: " + key });
     }
   });
 
+  socket.on(WEBSOCK_FFT_DATA, (data) => {
+    // Handle the received RMS data here
+    console.log("Received FFT data request:", data);
+    decodeAudio(data); // Call the sendData function to read and send the MP3 file
+  });
+
   socket.on("disconnect", () => {
+    // if (playbackInterval) clearInterval(playbackInterval); // Clear the interval if it exists
+
     console.log("A client disconnected");
   });
 });
@@ -88,3 +97,56 @@ mcast_server.startAdvertisement(
 server.listen(APP_PORT, () => {
   console.log(`Server is running on ${IPV4()}:${APP_PORT}`);
 });
+
+// testing code
+// const fs = require("fs");
+import fs from "fs";
+// const decode = require("audio-decode");
+import decode from "audio-decode";
+const decodeAudio = () => {
+  // Read a file into a buffer
+  const buffer = fs.readFileSync("Skrillex & Habstrakt - Chicken Soup.mp3");
+
+  // Decode the buffer
+  decode(buffer)
+    .then((audioBuffer) => {
+      console.log("Number of channels:", audioBuffer.numberOfChannels);
+      console.log("Sample rate:", audioBuffer.sampleRate);
+      console.log("Duration (seconds):", audioBuffer.duration);
+
+      const pcm16Data = new Int16Array(audioBuffer.getChannelData(0).length);
+      let max = 0;
+      for (let i = 0; i < pcm16Data.length; i++) {
+        if (Math.abs(audioBuffer.getChannelData(0)[i]) > max)
+          max = Math.abs(audioBuffer.getChannelData(0)[i]);
+      }
+      for (let i = 0; i < pcm16Data.length; i++)
+        pcm16Data[i] = Math.floor((audioBuffer.getChannelData(0)[i] / max) * 32767);
+
+      const chunkSize = 2048 / 4;
+
+      let currentIndex = 0;
+
+      playbackInterval = setInterval(() => {
+        if (currentIndex >= pcm16Data.length) {
+          clearInterval(playbackInterval);
+          console.log("Finished playback");
+          return;
+        }
+
+        // Extract the current chunk
+        const chunk = pcm16Data.slice(currentIndex, currentIndex + chunkSize);
+
+        // Emit the chunk to the client
+        io.emit(WEBSOCK_FFT_DATA, {
+          segment: Array.from(chunk),
+          sampleRate: audioBuffer.sampleRate,
+        });
+
+        currentIndex += chunkSize; // Move to the next chunk
+      }, (chunkSize / audioBuffer.sampleRate) * 1000); // Convert to milliseconds
+    })
+    .catch((err) => {
+      console.error("Failed to decode audio:", err);
+    });
+};

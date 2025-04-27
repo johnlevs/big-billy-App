@@ -5,7 +5,6 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "npx tsc ../utils/params.ts",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
@@ -15,6 +14,7 @@
   "dependencies": {
     "@generac/react-native-local-network-permission": "^1.2.0",
     "@react-native-community/netinfo": "^11.4.1",
+    "audio-decode": "^2.2.2",
     "expo-network": "^7.0.5",
     "express": "^5.1.0",
     "internal-ip": "^8.0.0",

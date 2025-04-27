@@ -1,18 +1,33 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
-import { ParamController } from "../utils/params.js";
-import { Alert } from "react-native";
-import { MulticastListener } from "../utils/multicast_listener.js";
-import { MULTICAST_ADDRESS, MULTICAST_PORT } from "../utils/constants.js";
-import { Platform } from "react-native";
+import { Platform, Alert } from "react-native";
+
+import { ParamController } from "@/utils/params.js";
+import { MulticastListener } from "@/utils/multicast_listener.js";
+import {
+  MULTICAST_ADDRESS,
+  MULTICAST_PORT,
+  WEBSOCK_PARAM_UPDATE,
+  REST_PARAMS,
+  WEBSOCK_FFT_DATA,
+  DISPLAY_BUFFER_SIZE,
+} from "@/utils/constants.js";
+import { format_fft_data, runFFT } from "@/utils/signalProcessing/fft.js";
 
 const AppStateContext = createContext();
 const SOCKET_OPTIONS = {};
 
 export const AppStateProvider = ({ children }) => {
   const [bbbParams, setParams] = useState(new ParamController());
-  const [serverAddr, setServerAddr] = useState("http://192.168.4.33:3000");
+  const [serverAddr, setServerAddr] = useState("http://10.0.0.13:3000");
   const [socket, setSocket] = useState(null);
+  const [audioBuffer, setAudioBuffer] = useState(new Int16Array(DISPLAY_BUFFER_SIZE).fill(0));
+  const [FFTAvg, updateFFTAvg] = useState(new Int16Array(DISPLAY_BUFFER_SIZE).fill(0)); // Initialize with 0
+  const [FFTData, setFFTDataForDisplay] = useState([{ x: 0, y: 0 }]); // Initialize with an empty array
+  const [fetchTrigger, setFetchTrigger] = useState(false); // New state variable
+
+  const animationFrameRef = useRef(null); // Ref to store the animation frame ID
+  const latestBufferRef = useRef(null); // Ref to store the latest buffer
 
   [isConnected, setIsConnected] = useState(false);
 
@@ -20,13 +35,17 @@ export const AppStateProvider = ({ children }) => {
 
   // function to set params
   const updateParams = (key, value) => {
-    // update local params
-    let newParams = new ParamController();
-    newParams.copyFrom(bbbParams);
-    newParams.set_from_percent(key, value);
+    setParams((prevParams) => {
+      const newParams = new ParamController();
+      newParams.copyFrom(prevParams);
+      newParams.set_from_percent(key, value);
+      return newParams;
+    });
+  };
 
-    // update state
-    setParams(newParams);
+  // Function to manually trigger the fetch
+  const triggerFetch = () => {
+    setFetchTrigger((prev) => !prev); // Toggle the state to trigger useEffect
   };
 
   // emits param change to server
@@ -36,7 +55,61 @@ export const AppStateProvider = ({ children }) => {
 
     // update server side params
     if (socket) {
-      socket.emit("paramChange", { key, value });
+      socket.emit(WEBSOCK_PARAM_UPDATE, { key, value });
+    } else {
+      console.error("Socket not initialized");
+    }
+  };
+
+  // updates FFT data
+  const updateFftData = (data) => {
+    // cast data to signed 16 bit int
+    const pcm = new Int16Array(data.segment);
+
+    // console.log("FFT data received:", fftBuff);
+    setAudioBuffer((prev = new Int16Array(DISPLAY_BUFFER_SIZE).fill(0)) => {
+      const updatedBuffer = new Int16Array(DISPLAY_BUFFER_SIZE);
+      const remainingSpace = Math.max(DISPLAY_BUFFER_SIZE - pcm.length, 0);
+      updatedBuffer.set(prev.slice(remainingSpace), 0); // Shift the previous buffer to the left
+      updatedBuffer.set(pcm, remainingSpace); // Add the new data to the end
+
+      updateFFTAvg((prev) => {
+        const alpha = 0.8; // Smoothing factor for averaging
+        const updatedAvg = new Int16Array(DISPLAY_BUFFER_SIZE);
+        const fftData = runFFT(updatedBuffer); // Run FFT on the updated buffer
+        for (let i = 0; i < DISPLAY_BUFFER_SIZE; i++)
+          updatedAvg[i] = prev[i] * (1 - alpha) + fftData[i] * alpha; // Average the values
+
+        // Store the latest buffer in a ref
+        latestBufferRef.current = updatedBuffer;
+
+        // If no animation frame is pending, schedule one
+        if (!animationFrameRef.current) {
+          animationFrameRef.current = requestAnimationFrame(() => {
+            setFFTDataForDisplay(format_fft_data(updatedAvg)); // Update the FFT data for display
+            animationFrameRef.current = null; // Reset the animation frame ref
+          });
+        }
+
+        return updatedAvg;
+      });
+
+      // Run FFT on the updated buffer
+      return updatedBuffer;
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
+
+  const sendPlay = () => {
+    if (socket) {
+      socket.emit(WEBSOCK_FFT_DATA);
     } else {
       console.error("Socket not initialized");
     }
@@ -48,8 +121,10 @@ export const AppStateProvider = ({ children }) => {
     // change to false without triggering useEffect
     setIsConnected(false);
 
+    setFFTDataForDisplay({ x: 0, y: 0 }); // Reset FFT data for display
+
     // fetch params from server
-    fetch(`${serverAddr}/params`, {
+    fetch(`${serverAddr}${REST_PARAMS}`, {
       method: "GET",
     })
       .then((response) => {
@@ -68,7 +143,6 @@ export const AppStateProvider = ({ children }) => {
             data[key].p_type
           );
         }
-        console.debug("Updating params:", newParams);
         setParams(newParams);
         setIsConnected(true);
         console.debug("Valid server detected, params fetched:", data);
@@ -81,19 +155,12 @@ export const AppStateProvider = ({ children }) => {
           buttons: [{ text: "OK" }],
         });
       });
-  }, [serverAddr]);
+  }, [serverAddr, fetchTrigger]);
 
   // once connected, set up web socket connection, and all socket events
   useEffect(() => {
     if (isConnected) {
-      if (Platform.OS !== "web") {
-        // start multicast listener
-        multicastListener.startListening((message, remoteInfo) => {
-          console.log("Received multicast message:", message.toString());
-          const addr = message.toString().trim();
-          setServerAddr(addr);
-        });
-      }
+      multicastListener.stopListening();
 
       console.debug("attempting to set up web socket connection to ", serverAddr);
       const newSocket = io(serverAddr, SOCKET_OPTIONS);
@@ -109,20 +176,27 @@ export const AppStateProvider = ({ children }) => {
       });
 
       // param event
-      newSocket.on("paramChange", (data) => {
+      newSocket.on(WEBSOCK_PARAM_UPDATE, (data) => {
         updateParams(data.key, data.value);
-        console.debug("Param change from server:", data.key, data.value);
       });
 
       // audio data event
-      newSocket.on("audioData", () => {});
+      newSocket.on(WEBSOCK_FFT_DATA, (data) => {
+        // this data is received as a byte array of mono audio data
+        updateFftData(data);
+      });
 
       setSocket(newSocket);
 
-      console.debug("Web Socket initialized:", newSocket);
+      console.debug("Web Socket initialized:", serverAddr);
     } else {
       if (Platform.OS !== "web") {
-        multicastListener.stopListening();
+        // start multicast listener
+        multicastListener.startListening((message, remoteInfo) => {
+          console.log("Received multicast message:", message.toString());
+          const addr = message.toString().trim();
+          setServerAddr(addr);
+        });
       }
     }
     return () => {
@@ -139,6 +213,9 @@ export const AppStateProvider = ({ children }) => {
         updateClientAndServerParams,
         updateParams,
         bbbParams,
+        FFTData,
+        sendPlay,
+        triggerFetch,
       }}
     >
       {children}

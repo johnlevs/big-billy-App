@@ -1,13 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TextInput, Button, Alert } from "react-native";
-import { useAppState } from "../../context/state";
+import { useAppState } from "@/context/state";
 
 export default function Settings() {
-  const { setServerAddr } = useAppState();
-  const [serverAddress, setServerAddress] = useState("");
+  const { setServerAddr, sendPlay, serverAddr, triggerFetch } = useAppState();
+  const [localScreenServerAddr, setLocalScreenServerAddr] = useState("");
+
+  useEffect(() => {
+    setLocalScreenServerAddr(serverAddr.replace("http://", "").replace(":3000", ""));
+  }, [serverAddr]);
 
   const handleSaveAddress = () => {
-    setServerAddr(`http://${serverAddress}`);
+    // hack to refresh the server address
+    setServerAddr("");
+    setServerAddr(`http://${localScreenServerAddr}:3000`);
     Alert.alert("Success", "Server address saved!");
   };
 
@@ -16,11 +22,15 @@ export default function Settings() {
       <Text style={styles.title}>Enter Server Address</Text>
       <TextInput
         style={styles.input}
-        placeholder="e.g., 192.168.4.33:3000"
-        value={serverAddress}
-        onChangeText={setServerAddress}
+        placeholder={`Current address: ${localScreenServerAddr}`}
+        value={localScreenServerAddr}
+        onChangeText={setLocalScreenServerAddr}
       />
-      <Button title="Save Address" onPress={handleSaveAddress} />
+      <View style={styles.buttonRow}>
+        <Button title="Save Address" onPress={handleSaveAddress} />
+        <Button title="Refresh" onPress={triggerFetch} />
+        <Button title="Play Sound" onPress={sendPlay} />
+      </View>
     </View>
   );
 }
@@ -45,5 +55,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     width: "100%",
     marginBottom: 20,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "50%",
   },
 });
